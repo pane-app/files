@@ -3,17 +3,16 @@
 //! `"fileIndex": true`, so Pane keeps the index current while Files is
 //! enabled, and stops watching the moment it is disabled). Root search asks
 //! it (`"rootResults": true`) and lists the best few files after what is
-//! found by title, with a row opening Search Files with the query typed;
-//! once open, the command owns the launcher's search field
-//! (`"search": true`) and lists more.
+//! found by title, with a row opening Search Files with the query typed.
 //!
 //! Installed as Pane's default extension, Search Files is drawn by Pane
 //! itself, as Raycast's File Search is (#177): Pane lists the index for it
 //! — Recently Used before typing, a type dropdown, more rows as the list
 //! scrolls, a detail with an image's preview and the file's Metadata —
-//! and this command's own list is not shown nor its `search` asked. A copy
-//! installed from a folder keeps them: its list says what is searched, and
-//! its `search` answers the best 50 entries.
+//! and this command's own list is not shown. A copy installed from a
+//! folder shows its list, which says what is searched. (Extension API 0.2
+//! retired a command's own `search` export, pane-app/pane#240, so such a
+//! copy no longer lists the entries its field's text finds.)
 //!
 //! Pane's host keeps the index, ranks the entries and checks each again
 //! before acting on it; the extension only asks the index and names the
@@ -26,21 +25,16 @@
 use pane_extension::alloc::{format, string::String, vec::Vec};
 use pane_extension::feedback::{Toast, show_toast};
 use pane_extension::file_index::{self, FileEntry, IndexState, SearchOptions};
-use pane_extension::root::{RootAction, RootResult};
-use pane_extension::search::SearchResult;
-use pane_extension::{Command, CustomView, FieldValue, FormError, Item, List, NoCustomView};
+use pane_extension::root::{RootAction, RootResult, WallTime};
+use pane_extension::{Command, Item, List, NoDesignedView};
 
 struct Files;
 pane_extension::export!(Files);
 pane_extension::root::export!(Files);
-pane_extension::search::export!(Files);
 
 /// The most files root search lists (Pane lists 5 at most, then a row
 /// searching them all).
 const ROOT_RESULTS: u32 = 5;
-
-/// The most files one search in Search Files' own field lists.
-const SEARCH_RESULTS: u32 = 50;
 
 /// What the index is doing, for people.
 fn status() -> String {
@@ -82,7 +76,7 @@ fn found(query: &str, limit: u32) -> Result<Vec<FileEntry>, String> {
 }
 
 impl Command for Files {
-    type CustomView = NoCustomView;
+    type DesignedView = NoDesignedView;
 
     async fn render() -> Result<List, String> {
         Ok(List::new("Search Files").item(
@@ -91,41 +85,13 @@ impl Command for Files {
                 .on_action(|| act("status")),
         ))
     }
-
-    async fn submit_form(item_id: String, _values: Vec<FieldValue>) -> Result<String, FormError> {
-        Err(FormError {
-            field: None,
-            message: format!("unknown form: {item_id}"),
-        })
-    }
-
-    async fn open_view(item_id: String) -> Result<CustomView, String> {
-        Err(format!("unknown view: {item_id}"))
-    }
-}
-
-impl pane_extension::search::Guest for Files {
-    /// The entries the text typed in Search Files' field finds, each named
-    /// by the id Pane gave it: Pane lists it with its own name and folder,
-    /// and gives it its file actions.
-    async fn search(_command: String, query: String) -> Result<Vec<SearchResult>, String> {
-        Ok(found(&query, SEARCH_RESULTS)?
-            .into_iter()
-            .map(|entry| SearchResult {
-                title: entry.name,
-                id: entry.path,
-                subtitle: None,
-                file: Some(entry.id),
-            })
-            .collect())
-    }
 }
 
 impl pane_extension::root::Guest for Files {
     /// The best few entries the query typed in root search finds, each
     /// opening the entry (Pane gives it the same actions as in Search
     /// Files).
-    async fn results_for(query: String) -> Result<Vec<RootResult>, String> {
+    async fn results_for(query: String, _at: WallTime) -> Result<Vec<RootResult>, String> {
         Ok(found(&query, ROOT_RESULTS)?
             .into_iter()
             .map(|entry| RootResult {
@@ -135,6 +101,8 @@ impl pane_extension::root::Guest for Files {
                 id: entry.path,
                 subtitle: None,
                 action: RootAction::OpenFile(entry.id),
+                // A file, not an answer: Pane lists it as the entry it is.
+                answer: None,
             })
             .collect())
     }
